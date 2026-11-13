@@ -19,11 +19,11 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "app_freertos.h"
-#include "main.h"
-//#include "usart.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include "usart.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -52,16 +52,19 @@ const osThreadAttr_t RealTimeTask_attributes = {
   .priority = (osPriority_t) osPriorityAboveNormal,
   .stack_size = 128 * 4
 };
-/* Definitions for CanCommTask */
-osThreadId_t CanCommTaskHandle;
-const osThreadAttr_t CanCommTask_attributes = {
-  .name = "CanCommTask",
+/* Definitions for ModbusCommTask */
+osThreadId_t ModbusCommTaskHandle;
+const osThreadAttr_t ModbusCommTask_attributes = {
+  .name = "ModbusCommTask",
   .priority = (osPriority_t) osPriorityBelowNormal,
   .stack_size = 128 * 4
 };
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
+
+void StartRealTimeTask(void *argument);
+void StartModbusCommTask(void *argument);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -93,8 +96,8 @@ void MX_FREERTOS_Init(void) {
   /* creation of RealTimeTask */
   RealTimeTaskHandle = osThreadNew(StartRealTimeTask, NULL, &RealTimeTask_attributes);
 
-  /* creation of CanCommTask */
-  CanCommTaskHandle = osThreadNew(StartCanCommTask, NULL, &CanCommTask_attributes);
+  /* creation of ModbusCommTask */
+  ModbusCommTaskHandle = osThreadNew(StartModbusCommTask, NULL, &ModbusCommTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -120,7 +123,7 @@ void StartRealTimeTask(void *argument)
 //  {
 //    osDelay(1);
 //  }
-
+	(void)argument;
     for (;;)
     {
         BSP_LED_Toggle(LED_GREEN);
@@ -130,31 +133,38 @@ void StartRealTimeTask(void *argument)
   /* USER CODE END RealTimeTask */
 }
 
-/* USER CODE BEGIN Header_StartCanCommTask */
+/* USER CODE BEGIN Header_StartModbusCommTask */
 /**
-* @brief Function implementing the CanCommTask thread.
+* @brief Function implementing the ModbusCommTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartCanCommTask */
-void StartCanCommTask(void *argument)
+/* USER CODE END Header_StartModbusCommTask */
+void StartModbusCommTask(void *argument)
 {
-  /* USER CODE BEGIN CanCommTask */
-  /* Infinite loop */
-//  for(;;)
-//  {
-//    osDelay(1);
-//  }
-	    const uint32_t delay = osKernelGetTickFreq();
+    (void)argument;
 
-	    for (;;)
-	    {
-	        printf("CanCommTask is running\r\n");
+    uint8_t message[] = "USART2 TX test\r\n";
+    const uint32_t delay = osKernelGetTickFreq();
 
-	        osDelay(delay);
+    for (;;)
+    {
+        HAL_StatusTypeDef tx_status;
 
-	}
-  /* USER CODE END CanCommTask */
+        tx_status = HAL_UART_Transmit(
+            &huart2,
+            message,
+            sizeof(message) - 1U,
+            100U
+        );
+
+        if (tx_status != HAL_OK)
+        {
+            Error_Handler(); // Temporary debugging behaviour
+        }
+
+        osDelay(delay);
+    }
 }
 
 /* Private application code --------------------------------------------------*/

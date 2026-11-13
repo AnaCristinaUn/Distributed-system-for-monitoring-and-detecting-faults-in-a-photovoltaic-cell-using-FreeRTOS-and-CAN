@@ -55,7 +55,7 @@ extern "C" {
 
 /* USER CODE END EM */
 extern osThreadId_t RealTimeTaskHandle;
-extern osThreadId_t CanCommTaskHandle;
+extern osThreadId_t ModbusCommTaskHandle;
 
 /* Exported function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -63,7 +63,7 @@ extern osThreadId_t CanCommTaskHandle;
 /* USER CODE END FunctionPrototypes */
 
 void StartRealTimeTask(void *argument);
-void StartCanCommTask(void *argument);
+void StartModbusCommTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
