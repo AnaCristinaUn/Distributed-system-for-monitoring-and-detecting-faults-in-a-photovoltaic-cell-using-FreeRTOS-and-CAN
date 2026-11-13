@@ -33,7 +33,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define UART_RX_READY_FLAG    (1U << 0) //1 binary; leaving space for other flags
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -43,7 +43,10 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+static uint8_t uart_rx_byte; //recieve buffer
 
+static volatile uint32_t uart_rx_errors = 0;
+static volatile uint32_t uart_tx_errors = 0;
 /* USER CODE END Variables */
 /* Definitions for RealTimeTask */
 osThreadId_t RealTimeTaskHandle;
@@ -142,33 +145,69 @@ void StartRealTimeTask(void *argument)
 /* USER CODE END Header_StartModbusCommTask */
 void StartModbusCommTask(void *argument)
 {
-    (void)argument;
+  /* USER CODE BEGIN ModbusCommTask */
+  /* Infinite loop */
+  (void)argument;
 
-    uint8_t message[] = "USART2 TX test\r\n";
-    const uint32_t delay = osKernelGetTickFreq();
+  HAL_StatusTypeDef status; //enum defined by STM32
+  	  	  	  	  	  	  	// common values: HAL_OK, HAL_ERROR, HAL_BUSY, HAL_TIMEOUT
+  uint32_t flags;           //stores result by osThreadFlagsWait()
+  for(;;)
+  {
+	  	  	  	  	  	  	  	  	//Using interrupt based recepetion
+	  status = HAL_UART_Receive_IT( //Get the message byte from rx
+			  &huart2,              //Pointer to UART handle to get its config
+			  &uart_rx_byte,       //Address of recieve buffer
+			  1U
+			  );
 
-    for (;;)
-    {
-        HAL_StatusTypeDef tx_status;
+	  if (status != HAL_OK)         //Check correct recepetion start
+	  {
+		  uart_rx_errors++;
+		  osDelay(10U);
+		  continue;
+	  }
 
-        tx_status = HAL_UART_Transmit(
-            &huart2,
-            message,
-            sizeof(message) - 1U,
-            100U
-        );
+	  do{
+		  flags = osThreadFlagsWait(
+				  UART_RX_READY_FLAG, //Flag we wait for
+				  osFlagsWaitAny,     //Wakes on any flags set, theres only one right now so when we get the RX flag
+				  osWaitForever       //Waits indefently
+				  );
+	  }
 
-        if (tx_status != HAL_OK)
-        {
-            Error_Handler(); // Temporary debugging behaviour
-        }
+	  while ((flags & osFlagsError) !=0U); //Repeat if an error is returned
 
-        osDelay(delay);
-    }
+	  if (uart_rx_byte >= 'a' && uart_rx_byte <= 'z')
+	  {
+	      uart_rx_byte = (uint8_t)(uart_rx_byte - ('a' - 'A')); //For easier testing
+	  }
+
+	  status = HAL_UART_Transmit( //Sends back the recieved byte, for testing
+			  &huart2,
+			  &uart_rx_byte,      //Finds the byte in the buffer
+			  1U,
+			  100U //Timeout of 100 milisecs
+			  );
+	  if (status != HAL_OK)
+	         {
+	             uart_tx_errors++;
+	         }
+  }
+  /* USER CODE END ModbusCommTask */
 }
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
-
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2)
+    {
+        (void)osThreadFlagsSet(
+            ModbusCommTaskHandle,
+            UART_RX_READY_FLAG
+        );
+    }
+}
 /* USER CODE END Application */
 
