@@ -1,0 +1,27 @@
+/Debug/
+# STM32CubeIDE build output
+/Debug/
+/Release/
+/Binaries/
+
+# Compiler and linker generated files
+*.o
+*.d
+*.elf
+*.hex
+*.bin
+*.map
+*.list
+*.cyclo
+*.su
+
+#Documents
+*.doc
+*.docx
+*.txt
+
+
+# Temporary files
+~$*
+*.tmp
+*.bak
