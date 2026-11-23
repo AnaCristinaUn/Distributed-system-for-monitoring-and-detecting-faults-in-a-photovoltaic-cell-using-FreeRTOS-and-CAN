@@ -33,7 +33,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define UART_RX_READY_FLAG    (1U << 0) //1 binary; leaving space for other flags
+#define UART_RX_QUEUE_LENGTH 256U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -45,8 +45,15 @@
 /* USER CODE BEGIN Variables */
 static uint8_t uart_rx_byte; //recieve buffer
 
-static volatile uint32_t uart_rx_errors = 0;
-static volatile uint32_t uart_tx_errors = 0;
+static osMessageQueueId_t uartRxQueueHandle; //Identifies RTOS message queue
+
+static volatile uint32_t uart_rx_queue_overflows = 0U; //Counts bytes lost because the queue was full
+static volatile uint32_t uart_rx_start_errors = 0U; //Counts failures when initially starting reception
+static volatile uint32_t uart_rx_rearm_errors = 0U; //Counts failures when restarting reception in the callback
+static volatile uint32_t uart_tx_errors = 0U; //Counts transmission failures
+static volatile uint32_t uart_rx_error_count = 0U;
+static volatile uint32_t uart_rx_last_error = 0U;
+static volatile uint32_t uart_rx_error_flags = 0U;
 /* USER CODE END Variables */
 /* Definitions for RealTimeTask */
 osThreadId_t RealTimeTaskHandle;
@@ -94,7 +101,11 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
+	uartRxQueueHandle = osMessageQueueNew(//Creates queue of 256 elements, each one byte in size
+	    UART_RX_QUEUE_LENGTH, //256
+	    sizeof(uint8_t),
+	    NULL
+	);
   /* USER CODE END RTOS_QUEUES */
   /* creation of RealTimeTask */
   RealTimeTaskHandle = osThreadNew(StartRealTimeTask, NULL, &RealTimeTask_attributes);
@@ -143,71 +154,108 @@ void StartRealTimeTask(void *argument)
 * @retval None
 */
 /* USER CODE END Header_StartModbusCommTask */
+
 void StartModbusCommTask(void *argument)
 {
-  /* USER CODE BEGIN ModbusCommTask */
-  /* Infinite loop */
-  (void)argument;
+    (void)argument;
 
-  HAL_StatusTypeDef status; //enum defined by STM32
-  	  	  	  	  	  	  	// common values: HAL_OK, HAL_ERROR, HAL_BUSY, HAL_TIMEOUT
-  uint32_t flags;           //stores result by osThreadFlagsWait()
-  for(;;)
-  {
-	  	  	  	  	  	  	  	  	//Using interrupt based recepetion
-	  status = HAL_UART_Receive_IT( //Get the message byte from rx
-			  &huart2,              //Pointer to UART handle to get its config
-			  &uart_rx_byte,       //Address of recieve buffer
-			  1U
-			  );
+    uint8_t received_byte;
+    HAL_StatusTypeDef status;
 
-	  if (status != HAL_OK)         //Check correct recepetion start
-	  {
-		  uart_rx_errors++;
-		  osDelay(10U);
-		  continue;
-	  }
+    /* Start interrupt-based UART reception */
+    do
+    {
+        status = HAL_UART_Receive_IT(
+            &huart2,
+            &uart_rx_byte,
+            1U
+        );
 
-	  do{
-		  flags = osThreadFlagsWait(
-				  UART_RX_READY_FLAG, //Flag we wait for
-				  osFlagsWaitAny,     //Wakes on any flags set, theres only one right now so when we get the RX flag
-				  osWaitForever       //Waits indefently
-				  );
-	  }
+        if (status != HAL_OK)
+        {
+            uart_rx_start_errors++;
+            osDelay(10U);
+        }
 
-	  while ((flags & osFlagsError) !=0U); //Repeat if an error is returned
+    } while (status != HAL_OK);
 
-	  if (uart_rx_byte >= 'a' && uart_rx_byte <= 'z')
-	  {
-	      uart_rx_byte = (uint8_t)(uart_rx_byte - ('a' - 'A')); //For easier testing
-	  }
+    /* Process received bytes */
+    for (;;)
+    {
+        if (osMessageQueueGet(
+                uartRxQueueHandle,
+                &received_byte,
+                NULL,
+                osWaitForever
+            ) == osOK)
+        {
+            /* Convert lowercase ASCII characters to uppercase */
+            if (received_byte >= 'a' && received_byte <= 'z')
+            {
+                received_byte = (uint8_t)(
+                    received_byte - ('a' - 'A')
+                );
+            }
 
-	  status = HAL_UART_Transmit( //Sends back the recieved byte, for testing
-			  &huart2,
-			  &uart_rx_byte,      //Finds the byte in the buffer
-			  1U,
-			  100U //Timeout of 100 milisecs
-			  );
-	  if (status != HAL_OK)
-	         {
-	             uart_tx_errors++;
-	         }
-  }
-  /* USER CODE END ModbusCommTask */
+            /* Echo the processed byte to the PC */
+            status = HAL_UART_Transmit(
+                &huart2,
+                &received_byte,
+                1U,
+                100U
+            );
+
+            if (status != HAL_OK)
+            {
+                uart_tx_errors++;
+            }
+        }
+    }
 }
+
+
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-    if (huart->Instance == USART2)
-    {
-        (void)osThreadFlagsSet(
-            ModbusCommTaskHandle,
-            UART_RX_READY_FLAG
-        );
-    }
-}
+  void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+  {
+      if (huart->Instance == USART2)
+      {
+          uint8_t received_byte = uart_rx_byte;
+
+          // Put received byte into the RTOS queue
+          if (osMessageQueuePut(
+                  uartRxQueueHandle,
+                  &received_byte,
+                  0U,
+                  0U //An interrupt msut never wait for queue space
+              ) != osOK)
+          {
+              uart_rx_queue_overflows++;
+          }
+
+          // Immediately prepare reception of the next byte
+          if (HAL_UART_Receive_IT(
+                  &huart2,
+                  &uart_rx_byte,
+                  1U
+              ) != HAL_OK)
+          {
+              uart_rx_rearm_errors++;
+          }
+      }
+  }
+
+  void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+  {
+      if (huart->Instance == USART2)
+      {
+          uint32_t error = huart->ErrorCode;
+
+          uart_rx_error_count++;
+          uart_rx_last_error = error;
+          uart_rx_error_flags |= error;
+      }
+  }
 /* USER CODE END Application */
 
