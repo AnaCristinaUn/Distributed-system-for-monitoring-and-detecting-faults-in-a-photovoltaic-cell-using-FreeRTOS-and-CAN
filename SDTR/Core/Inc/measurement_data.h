@@ -27,7 +27,7 @@ typedef struct
     uint32_t sequence_number; // ID
     uint32_t timestamp_ms;    // Acquisition time
 
-    uint32_t voltage_mV;
+    uint32_t voltage_mV; //
     uint32_t current_mA;
     uint32_t power_mW;
 

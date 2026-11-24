@@ -119,7 +119,7 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN RTOS_QUEUES */
 	uartRxQueueHandle = osMessageQueueNew(//Creates queue of 256 elements, each one byte in size
 	    UART_RX_QUEUE_LENGTH, //256
-	    sizeof(uint8_t),
+	    sizeof(uint8_t), //
 	    NULL
 	);
 
