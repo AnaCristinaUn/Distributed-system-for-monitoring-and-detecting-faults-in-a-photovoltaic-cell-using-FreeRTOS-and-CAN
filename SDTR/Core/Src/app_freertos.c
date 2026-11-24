@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include "usart.h"
+#include "measurement_data.h" // To be able to use the shared struct
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,6 +44,10 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+
+static MeasurementSnapshot_t measurementSnapshot; // Shared item between the two tasks for measurements
+static osMutexId_t measurementMutexHandle;        // Mutex declaration
+
 static uint8_t uart_rx_byte; //recieve buffer
 
 static osMessageQueueId_t uartRxQueueHandle; //Identifies RTOS message queue
@@ -75,6 +80,12 @@ const osThreadAttr_t ModbusCommTask_attributes = {
 
 void StartRealTimeTask(void *argument);
 void StartModbusCommTask(void *argument);
+static void PublishMeasurementSnapshot(
+    const MeasurementSnapshot_t *newSnapshot
+);
+static uint8_t ReadMeasurementSnapshot(
+    MeasurementSnapshot_t *snapshotCopy
+);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -89,7 +100,12 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END Init */
 
   /* USER CODE BEGIN RTOS_MUTEX */
-  /* add mutexes, ... */
+	measurementMutexHandle = osMutexNew(NULL);
+
+	if (measurementMutexHandle == NULL)
+	{
+	    Error_Handler();
+	}
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -106,6 +122,11 @@ void MX_FREERTOS_Init(void) {
 	    sizeof(uint8_t),
 	    NULL
 	);
+
+	if (uartRxQueueHandle == NULL) //Prevents application from starting without a valid queue handle
+	{
+	    Error_Handler();
+	}
   /* USER CODE END RTOS_QUEUES */
   /* creation of RealTimeTask */
   RealTimeTaskHandle = osThreadNew(StartRealTimeTask, NULL, &RealTimeTask_attributes);
@@ -217,6 +238,45 @@ void StartModbusCommTask(void *argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+static void PublishMeasurementSnapshot( // Used by the measuring task to publish message
+    const MeasurementSnapshot_t *newSnapshot // New snapshot
+)
+{
+    if (newSnapshot == NULL)
+    {
+        return;
+    }
+
+    if (osMutexAcquire(measurementMutexHandle, osWaitForever) == osOK)//Get control of the Mutex
+    {
+        measurementSnapshot = *newSnapshot; //Set the measurementSnapshot as the newly constructed values.
+
+        osMutexRelease(measurementMutexHandle);//Release the mutex
+    }
+}
+
+static uint8_t ReadMeasurementSnapshot(
+    MeasurementSnapshot_t *snapshotCopy
+)
+{
+    if (snapshotCopy == NULL)
+    {
+        return 0U;
+    }
+
+    if (osMutexAcquire(measurementMutexHandle, osWaitForever) == osOK) //Get control of the Mutex
+    {
+        *snapshotCopy = measurementSnapshot; //Copy the values in the local snapshotCopy
+
+        osMutexRelease(measurementMutexHandle); //Release the Mutex
+
+        return 1U;
+    }
+
+    return 0U;
+}
+
   void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   {
       if (huart->Instance == USART2)
