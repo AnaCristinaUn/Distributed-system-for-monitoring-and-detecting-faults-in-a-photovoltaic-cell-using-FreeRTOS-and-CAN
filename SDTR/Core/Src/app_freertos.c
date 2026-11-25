@@ -35,6 +35,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define UART_RX_QUEUE_LENGTH 256U
+#define TELEMETRY_PERIOD_MS 1000U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -162,14 +163,14 @@ void StartRealTimeTask(void *argument)
 //  }
 	(void)argument;
     uint32_t sequence = 0U;
-    for (;;)
+    for (;;) //Forever
     {
         MeasurementSnapshot_t newSnapshot = {0};
 
-        sequence++;
+        sequence++;//Increment ID
 
-        newSnapshot.sequence_number = sequence;
-        newSnapshot.timestamp_ms = osKernelGetTickCount();
+        newSnapshot.sequence_number = sequence; //Give number to ID
+        newSnapshot.timestamp_ms = osKernelGetTickCount(); //Get time to add timestamp
 
         /* Temporary test values */
         newSnapshot.voltage_mV = 5000U;
@@ -179,7 +180,7 @@ void StartRealTimeTask(void *argument)
         newSnapshot.fault_state = PV_STATE_NORMAL;
         newSnapshot.data_valid = 1U;
 
-        PublishMeasurementSnapshot(&newSnapshot);
+        PublishMeasurementSnapshot(&newSnapshot); //Using the task to publish values through MUTEX
 
         BSP_LED_Toggle(LED_GREEN);
 
@@ -200,13 +201,14 @@ void StartModbusCommTask(void *argument)
 {
     (void)argument;
 
-    uint8_t received_byte;
-    HAL_StatusTypeDef status;
+    uint8_t received_byte; //Data from pc
+    HAL_StatusTypeDef status; //For debug
+    uint32_t last_telemetry_tick = osKernelGetTickCount(); //Get time
 
-    /* Start interrupt-based UART reception */
+    // Start interrupt-based UART reception
     do
     {
-        status = HAL_UART_Receive_IT(
+        status = HAL_UART_Receive_IT(//Using interrupt
             &huart2,
             &uart_rx_byte,
             1U
@@ -215,21 +217,34 @@ void StartModbusCommTask(void *argument)
         if (status != HAL_OK)
         {
             uart_rx_start_errors++;
-            osDelay(10U);
+            osDelay(10U); //Keep trying
         }
 
     } while (status != HAL_OK);
 
-
     for (;;)
     {
-        if (osMessageQueueGet(
-                uartRxQueueHandle,
-                &received_byte,
-                NULL,
-                osWaitForever
-            ) == osOK)
+        // Check for received UART bytes without blocking
+        while (osMessageQueueGet(
+                   uartRxQueueHandle,
+                   &received_byte,
+                   NULL,
+                   0U
+               ) == osOK)
         {
+            //   Command processing will be implemented later.
+        }
+
+        // Check if the telemetry period has elapsed
+        uint32_t current_tick = osKernelGetTickCount();
+
+        uint32_t telemetry_ticks =
+            (TELEMETRY_PERIOD_MS * osKernelGetTickFreq()) / 1000U;
+
+        if ((current_tick - last_telemetry_tick) >= telemetry_ticks)
+        {
+            last_telemetry_tick = current_tick;
+
             MeasurementSnapshot_t localSnapshot;
             char tx_buffer[128];
             int tx_length;
@@ -249,7 +264,8 @@ void StartModbusCommTask(void *argument)
                     (unsigned int)localSnapshot.data_valid
                 );
 
-                if (tx_length > 0 && tx_length < (int)sizeof(tx_buffer))
+                if (tx_length > 0 &&
+                    tx_length < (int)sizeof(tx_buffer))
                 {
                     status = HAL_UART_Transmit(
                         &huart2,
@@ -265,6 +281,8 @@ void StartModbusCommTask(void *argument)
                 }
             }
         }
+
+        osDelay(1U);
     }
 }
 
