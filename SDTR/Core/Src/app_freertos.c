@@ -59,20 +59,22 @@ static volatile uint32_t uart_tx_errors = 0U; //Counts transmission failures
 static volatile uint32_t uart_rx_error_count = 0U;
 static volatile uint32_t uart_rx_last_error = 0U;
 static volatile uint32_t uart_rx_error_flags = 0U;
+
+
 /* USER CODE END Variables */
 /* Definitions for RealTimeTask */
 osThreadId_t RealTimeTaskHandle;
-const osThreadAttr_t RealTimeTask_attributes = {
+const osThreadAttr_t RealTimeTask_attributes = {//
   .name = "RealTimeTask",
   .priority = (osPriority_t) osPriorityAboveNormal,
-  .stack_size = 128 * 4
+  .stack_size = 1024
 };
 /* Definitions for ModbusCommTask */
 osThreadId_t ModbusCommTaskHandle;
 const osThreadAttr_t ModbusCommTask_attributes = {
   .name = "ModbusCommTask",
   .priority = (osPriority_t) osPriorityBelowNormal,
-  .stack_size = 128 * 4
+  .stack_size = 1024
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -94,7 +96,7 @@ static uint8_t ReadMeasurementSnapshot(
   * @param  None
   * @retval None
   */
-void MX_FREERTOS_Init(void) {
+void MX_FREERTOS_Init(void) { //Where we intialise RTOS objects before starting the scheduler
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
@@ -159,11 +161,29 @@ void StartRealTimeTask(void *argument)
 //    osDelay(1);
 //  }
 	(void)argument;
+    uint32_t sequence = 0U;
     for (;;)
     {
+        MeasurementSnapshot_t newSnapshot = {0};
+
+        sequence++;
+
+        newSnapshot.sequence_number = sequence;
+        newSnapshot.timestamp_ms = osKernelGetTickCount();
+
+        /* Temporary test values */
+        newSnapshot.voltage_mV = 5000U;
+        newSnapshot.current_mA = 128U;
+        newSnapshot.power_mW = 640U;
+
+        newSnapshot.fault_state = PV_STATE_NORMAL;
+        newSnapshot.data_valid = 1U;
+
+        PublishMeasurementSnapshot(&newSnapshot);
+
         BSP_LED_Toggle(LED_GREEN);
 
-        osDelay(osKernelGetTickFreq() / 2U);
+        osDelay(500U);
     }
   /* USER CODE END RealTimeTask */
 }
@@ -200,7 +220,7 @@ void StartModbusCommTask(void *argument)
 
     } while (status != HAL_OK);
 
-    /* Process received bytes */
+
     for (;;)
     {
         if (osMessageQueueGet(
@@ -210,25 +230,39 @@ void StartModbusCommTask(void *argument)
                 osWaitForever
             ) == osOK)
         {
-            /* Convert lowercase ASCII characters to uppercase */
-            if (received_byte >= 'a' && received_byte <= 'z')
+            MeasurementSnapshot_t localSnapshot;
+            char tx_buffer[128];
+            int tx_length;
+
+            if (ReadMeasurementSnapshot(&localSnapshot) != 0U)
             {
-                received_byte = (uint8_t)(
-                    received_byte - ('a' - 'A')
+                tx_length = snprintf(
+                    tx_buffer,
+                    sizeof(tx_buffer),
+                    "SEQ=%lu TIME=%lu V=%lu mV I=%lu mA P=%lu mW STATE=%u VALID=%u\r\n",
+                    (unsigned long)localSnapshot.sequence_number,
+                    (unsigned long)localSnapshot.timestamp_ms,
+                    (unsigned long)localSnapshot.voltage_mV,
+                    (unsigned long)localSnapshot.current_mA,
+                    (unsigned long)localSnapshot.power_mW,
+                    (unsigned int)localSnapshot.fault_state,
+                    (unsigned int)localSnapshot.data_valid
                 );
-            }
 
-            /* Echo the processed byte to the PC */
-            status = HAL_UART_Transmit(
-                &huart2,
-                &received_byte,
-                1U,
-                100U
-            );
+                if (tx_length > 0 && tx_length < (int)sizeof(tx_buffer))
+                {
+                    status = HAL_UART_Transmit(
+                        &huart2,
+                        (uint8_t *)tx_buffer,
+                        (uint16_t)tx_length,
+                        100U
+                    );
 
-            if (status != HAL_OK)
-            {
-                uart_tx_errors++;
+                    if (status != HAL_OK)
+                    {
+                        uart_tx_errors++;
+                    }
+                }
             }
         }
     }
@@ -282,6 +316,7 @@ static uint8_t ReadMeasurementSnapshot(
       if (huart->Instance == USART2)
       {
           uint8_t received_byte = uart_rx_byte;
+
 
           // Put received byte into the RTOS queue
           if (osMessageQueuePut(
